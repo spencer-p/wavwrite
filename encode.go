@@ -1,19 +1,17 @@
-package wav
+package wavwrite
 
 import (
 	"bufio"
 	"encoding/binary"
-	"fmt"
 	"io"
 
-	"github.com/faiface/beep"
 	"github.com/pkg/errors"
 )
 
 // Encode writes all audio streamed from s to w in WAVE format.
 //
 // Format precision must be 1 or 2 bytes.
-func Encode(w io.WriteSeeker, s beep.Streamer, format beep.Format) (err error) {
+func Encode(w io.WriteSeeker, s Streamer, format Format) (err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Wrap(err, "wav")
@@ -48,29 +46,15 @@ func Encode(w io.WriteSeeker, s beep.Streamer, format beep.Format) (err error) {
 
 	var (
 		bw      = bufio.NewWriter(w)
-		samples = make([][2]float64, 512)
-		buffer  = make([]byte, len(samples)*format.Width())
+		buffer  = make([]byte, 512*format.Width())
 		written int
 	)
 	for {
-		n, ok := s.Stream(samples)
+		n, ok := s.Stream(buffer)
 		if !ok {
 			break
 		}
-		buf := buffer
-		switch {
-		case format.Precision == 1:
-			for _, sample := range samples[:n] {
-				buf = buf[format.EncodeUnsigned(buf, sample):]
-			}
-		case format.Precision == 2:
-			for _, sample := range samples[:n] {
-				buf = buf[format.EncodeSigned(buf, sample):]
-			}
-		default:
-			panic(fmt.Errorf("wav: encode: invalid precision: %d", format.Precision))
-		}
-		nn, err := bw.Write(buffer[:n*format.Width()])
+		nn, err := bw.Write(buffer[:n])
 		if err != nil {
 			return err
 		}
@@ -94,4 +78,20 @@ func Encode(w io.WriteSeeker, s beep.Streamer, format beep.Format) (err error) {
 	}
 
 	return nil
+}
+
+type header struct {
+	RiffMark      [4]byte
+	FileSize      int32
+	WaveMark      [4]byte
+	FmtMark       [4]byte
+	FormatSize    int32
+	FormatType    int16
+	NumChans      int16
+	SampleRate    int32
+	ByteRate      int32
+	BytesPerFrame int16
+	BitsPerSample int16
+	DataMark      [4]byte
+	DataSize      int32
 }
