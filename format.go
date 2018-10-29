@@ -29,6 +29,9 @@ type Format struct {
 	// Precision is the number of bytes used to encode a single sample. Only values up to 6 work
 	// well, higher values loose precision due to floating point numbers.
 	Precision int
+
+	// DataSize is the number of bytes of data that you will write.
+	DataSize int
 }
 
 // Width returns the number of bytes per one frame (samples in all channels).

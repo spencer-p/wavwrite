@@ -3,6 +3,7 @@ package wavwrite
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"io"
 
 	"github.com/pkg/errors"
@@ -10,8 +11,9 @@ import (
 
 // Encode writes all audio streamed from s to w in WAVE format.
 //
-// Format precision must be 1 or 2 bytes.
-func Encode(w io.WriteSeeker, s Streamer, format Format) (err error) {
+// Format precision must be 1 or 2 bytes. Format.DataSize must acccurately
+// describe the bytes you will write.
+func Encode(w io.Writer, s Streamer, format Format) (err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Wrap(err, "wav")
@@ -19,15 +21,15 @@ func Encode(w io.WriteSeeker, s Streamer, format Format) (err error) {
 	}()
 
 	if format.NumChannels <= 0 {
-		return errors.New("wav: invalid number of channels (less than 1)")
+		return errors.New("invalid number of channels (less than 1)")
 	}
 	if format.Precision != 1 && format.Precision != 2 {
-		return errors.New("wav: unsupported precision, 1 or 2 is supported")
+		return errors.New("unsupported precision, 1 or 2 is supported")
 	}
 
 	h := header{
 		RiffMark:      [4]byte{'R', 'I', 'F', 'F'},
-		FileSize:      -1, // finalization
+		FileSize:      int32(format.DataSize + 44), /* 44 is the header size */
 		WaveMark:      [4]byte{'W', 'A', 'V', 'E'},
 		FmtMark:       [4]byte{'f', 'm', 't', ' '},
 		FormatSize:    16,
@@ -38,43 +40,32 @@ func Encode(w io.WriteSeeker, s Streamer, format Format) (err error) {
 		BytesPerFrame: int16(format.NumChannels * format.Precision),
 		BitsPerSample: int16(format.Precision) * 8,
 		DataMark:      [4]byte{'d', 'a', 't', 'a'},
-		DataSize:      -1, // finalization
+		DataSize:      int32(format.DataSize),
 	}
 	if err := binary.Write(w, binary.LittleEndian, &h); err != nil {
 		return err
 	}
 
-	var (
-		bw      = bufio.NewWriter(w)
-		buffer  = make([]byte, 512*format.Width())
-		written int
-	)
+	bw := bufio.NewWriter(w)
+	written := 0
 	for {
-		n, ok := s.Stream(buffer)
-		if !ok {
-			break
-		}
-		nn, err := bw.Write(buffer[:n])
+		n, err := s.Stream(bw)
 		if err != nil {
 			return err
 		}
-		written += nn
+		if n == 0 {
+			break
+		}
+		written += n
 	}
 	if err := bw.Flush(); err != nil {
 		return err
 	}
 
-	// finalize header
-	h.FileSize = int32(44 + written) // 44 is the size of the header
-	h.DataSize = int32(written)
-	if _, err := w.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	if err := binary.Write(w, binary.LittleEndian, &h); err != nil {
-		return err
-	}
-	if _, err := w.Seek(0, io.SeekEnd); err != nil {
-		return err
+	// Check the bytes actually written matched what we said we would write
+	if written != format.DataSize {
+		return fmt.Errorf("format.DataSize (%d) does not match actual written bytes (%d)",
+			format.DataSize, written)
 	}
 
 	return nil
